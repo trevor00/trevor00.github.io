@@ -19,7 +19,7 @@ Grade 4 in Sunktunkwan university. Software major. Interest in math, physics mai
 non
 
 
-## Contack
+## Contact
 
 thkim9x@gmail.com
 
