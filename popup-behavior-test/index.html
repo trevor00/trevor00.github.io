@@ -1,0 +1,86 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <title>Popup Behavior Test</title>
+  <style>
+    body { font-family: system-ui, sans-serif; margin: 2rem; max-width: 900px; }
+    input { width: 100%; padding: .5rem; box-sizing: border-box; }
+    button { margin-top: .5rem; padding: .5rem .8rem; }
+    pre { background: #f5f5f5; padding: 1rem; min-height: 12rem; }
+  </style>
+</head>
+<body>
+  <h1>Popup Behavior Test</h1>
+  <p>
+    This page automatically tries to open a localhost helper popup after load.
+    It also has a manual button for user-click comparison.
+  </p>
+
+  <label>Popup target URL</label>
+  <input id="target" value="http://127.0.0.1:8890/helper.html">
+
+  <label>Canary token</label>
+  <input id="token">
+
+  <button id="manual">Manual open helper popup</button>
+  <button id="clear">Clear log</button>
+
+  <h2>Log</h2>
+  <pre id="log"></pre>
+
+<script>
+const $ = id => document.getElementById(id);
+
+function log(m) {
+  const line = `[${new Date().toISOString()}] ${m}`;
+  $("log").textContent += line + "\n";
+  console.log(line);
+}
+
+function newToken() {
+  const t = "AUTO_POPUP_CANARY_" + crypto.randomUUID() + "_" + Date.now();
+  $("token").value = t;
+  return t;
+}
+
+function buildUrl() {
+  const u = new URL($("target").value);
+  const token = $("token").value || newToken();
+  u.searchParams.set("token", token);
+  u.searchParams.set("returnOrigin", window.location.origin);
+  u.searchParams.set("parentOrigin", window.location.origin);
+  u.searchParams.set("source", "popup-behavior-test");
+  return u.toString();
+}
+
+function openPopup(label) {
+  const url = buildUrl();
+  log(label + ": window.open -> " + url);
+
+  const w = window.open(
+    url,
+    "popup_behavior_test",
+    "popup,width=900,height=700"
+  );
+
+  if (w) {
+    log(label + ": window.open returned Window object; popup may have opened.");
+  } else {
+    log(label + ": window.open returned null; popup was likely blocked.");
+  }
+}
+
+window.addEventListener("message", event => {
+  log("postMessage from " + event.origin + ": " + JSON.stringify(event.data));
+});
+
+$("manual").onclick = () => openPopup("manual-click");
+$("clear").onclick = () => { $("log").textContent = ""; };
+
+newToken();
+log("Page loaded. Auto popup attempt will run in 800 ms.");
+setTimeout(() => openPopup("auto-load"), 800);
+</script>
+</body>
+</html>
