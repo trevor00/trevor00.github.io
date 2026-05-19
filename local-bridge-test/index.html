@@ -1,0 +1,28 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <title>HTTPS Origin Local Bridge Test</title>
+</head>
+<body>
+  <h1>HTTPS Origin Local Bridge Test</h1>
+
+  <label>Target base URL</label>
+  <input id="target" value="http://127.0.0.1:8787" style="width: 420px;" />
+
+  <br><br>
+
+  <input id="token" style="width: 720px;" />
+  <br><br>
+
+  <button id="newToken">Generate new token</button>
+  <button id="ping">Ping target</button>
+  <button id="sendGet">Send GET</button>
+  <button id="sendPost">Send POST JSON</button>
+  <button id="sendImg">Send as image load</button>
+
+  <pre id="log" style="background:#f5f5f5; padding:1rem; min-height:12rem;"></pre>
+
+  <script src="./token-sender.js"></script>
+</body>
+</html>
