@@ -2,26 +2,49 @@
 <html lang="en">
 <head>
   <meta charset="utf-8" />
-  <title>HTTPS Origin Local Bridge Test</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Cross-Device Local Bridge Lab</title>
+  <style>
+    body { font-family: system-ui, sans-serif; margin: 2rem; line-height: 1.5; max-width: 980px; }
+    label { display: block; margin: 0.75rem 0 0.25rem; font-weight: 600; }
+    input, select, button, textarea { font: inherit; }
+    input, textarea { width: 100%; box-sizing: border-box; padding: 0.55rem; }
+    button { padding: 0.55rem 0.8rem; margin: 0.4rem 0.3rem 0.4rem 0; cursor: pointer; }
+    .row { display: grid; grid-template-columns: 1fr 1fr; gap: 1rem; }
+    pre { background: #f5f5f5; padding: 1rem; overflow: auto; min-height: 12rem; border: 1px solid #ddd; }
+    .note { background: #fff8d8; border: 1px solid #e5d37a; padding: 0.75rem; }
+  </style>
 </head>
 <body>
-  <h1>HTTPS Origin Local Bridge Test</h1>
+  <h1>Cross-Device Local Bridge Lab</h1>
+  <p class="note">Use only generated canary tokens on devices and networks you control. Do not paste real cookies, account IDs, advertising IDs, or personal data.</p>
 
-  <label>Target base URL</label>
-  <input id="target" value="http://127.0.0.1:8787" style="width: 420px;" />
+  <div class="row">
+    <div>
+      <label for="target">Target base URL</label>
+      <input id="target" value="http://127.0.0.1:8787" />
+    </div>
+    <div>
+      <label for="mode">Request mode</label>
+      <select id="mode">
+        <option value="cors">cors</option>
+        <option value="no-cors">no-cors</option>
+      </select>
+    </div>
+  </div>
 
-  <br><br>
-
-  <input id="token" style="width: 720px;" />
-  <br><br>
+  <label for="token">Canary token</label>
+  <input id="token" />
 
   <button id="newToken">Generate new token</button>
-  <button id="ping">Ping target</button>
   <button id="sendGet">Send GET</button>
   <button id="sendPost">Send POST JSON</button>
   <button id="sendImg">Send as image load</button>
+  <button id="ping">Ping target</button>
+  <button id="clear">Clear log</button>
 
-  <pre id="log" style="background:#f5f5f5; padding:1rem; min-height:12rem;"></pre>
+  <h2>Log</h2>
+  <pre id="log"></pre>
 
   <script src="./token-sender.js"></script>
 </body>
