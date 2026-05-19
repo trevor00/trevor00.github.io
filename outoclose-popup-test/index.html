@@ -1,0 +1,92 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <title>Autoclose Popup Test</title>
+  <style>
+    body { font-family: system-ui, sans-serif; margin: 2rem; max-width: 900px; line-height: 1.5; }
+    input { width: 100%; padding: .5rem; box-sizing: border-box; }
+    button { margin-top: .5rem; padding: .5rem .8rem; }
+    pre { background: #f5f5f5; padding: 1rem; min-height: 12rem; }
+  </style>
+</head>
+<body>
+  <h1>Autoclose Popup Test</h1>
+  <p>
+    Controlled test page. It opens a localhost helper popup with a closeAfterMs parameter.
+    Use only your local companion simulator.
+  </p>
+
+  <label>Popup target URL</label>
+  <input id="target" value="http://127.0.0.1:8890/helper.html?closeAfterMs=1500">
+
+  <label>Canary token</label>
+  <input id="token">
+
+  <button id="manual">Manual open helper popup</button>
+  <button id="auto">Run auto popup attempt</button>
+  <button id="clear">Clear log</button>
+
+  <h2>Log</h2>
+  <pre id="log"></pre>
+
+<script>
+const $ = id => document.getElementById(id);
+
+function log(m) {
+  const line = `[${new Date().toISOString()}] ${m}`;
+  $("log").textContent += line + "\n";
+  console.log(line);
+}
+
+function newToken() {
+  const t = "AUTOCLOSE_POPUP_CANARY_" + crypto.randomUUID() + "_" + Date.now();
+  $("token").value = t;
+  return t;
+}
+
+function buildUrl() {
+  const u = new URL($("target").value);
+  const token = $("token").value || newToken();
+
+  u.searchParams.set("token", token);
+  u.searchParams.set("returnOrigin", window.location.origin);
+  u.searchParams.set("parentOrigin", window.location.origin);
+  u.searchParams.set("source", "outoclose-popup-test");
+
+  return u.toString();
+}
+
+function openPopup(label) {
+  const url = buildUrl();
+  log(label + ": window.open -> " + url);
+
+  const w = window.open(
+    url,
+    "outoclose_popup_test",
+    "popup,width=900,height=700"
+  );
+
+  if (w) {
+    log(label + ": window.open returned Window object; popup may have opened.");
+  } else {
+    log(label + ": window.open returned null; popup was likely blocked.");
+  }
+}
+
+window.addEventListener("message", event => {
+  log("postMessage from " + event.origin + ": " + JSON.stringify(event.data));
+});
+
+$("manual").onclick = () => openPopup("manual-click");
+$("auto").onclick = () => {
+  log("auto popup attempt will run in 800 ms");
+  setTimeout(() => openPopup("auto-delay"), 800);
+};
+$("clear").onclick = () => { $("log").textContent = ""; };
+
+newToken();
+log("Ready. Start companion_simulator.py on port 8890 first.");
+</script>
+</body>
+</html>
