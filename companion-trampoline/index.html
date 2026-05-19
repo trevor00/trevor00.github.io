@@ -1,0 +1,134 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Companion Trampoline Condition Test</title>
+  <style>
+    body { font-family: system-ui, sans-serif; margin: 2rem; line-height: 1.5; max-width: 1040px; }
+    label { display: block; margin: 0.75rem 0 0.25rem; font-weight: 600; }
+    input, button, select { font: inherit; }
+    input { width: 100%; box-sizing: border-box; padding: 0.55rem; }
+    button { padding: 0.55rem 0.8rem; margin: 0.4rem 0.3rem 0.4rem 0; cursor: pointer; }
+    pre { background: #f5f5f5; padding: 1rem; overflow: auto; min-height: 14rem; border: 1px solid #ddd; }
+    iframe { width: 100%; height: 340px; border: 1px solid #999; background: #fff; }
+    .note { background: #fff8d8; border: 1px solid #e5d37a; padding: 0.75rem; }
+    .row { display: grid; grid-template-columns: 1fr 1fr; gap: 1rem; }
+    table { border-collapse: collapse; width: 100%; margin-top: 1rem; }
+    th, td { border: 1px solid #ddd; padding: 0.45rem; text-align: left; }
+  </style>
+</head>
+<body>
+  <h1>Companion Trampoline Condition Test</h1>
+  <p class="note">Controlled feasibility test for an already-running local companion surface. This page embeds a local helper page. The helper page calls a same-origin local API and returns the result by postMessage. Use only generated canary tokens on devices you control.</p>
+
+  <label for="helperUrl">Local helper page URL</label>
+  <input id="helperUrl" value="http://127.0.0.1:8890/helper.html" />
+
+  <div class="row">
+    <div>
+      <label for="token">Canary token</label>
+      <input id="token" />
+    </div>
+    <div>
+      <label for="expectedOrigin">Expected helper origin</label>
+      <input id="expectedOrigin" value="http://127.0.0.1:8890" />
+    </div>
+  </div>
+
+  <button id="newToken">Generate new token</button>
+  <button id="loadFrame">Load helper iframe</button>
+  <button id="openPopup">Open helper popup</button>
+  <button id="clear">Clear log</button>
+
+  <h2>Condition checklist</h2>
+  <table>
+    <tbody>
+      <tr><th>Condition</th><th id="c1">not tested</th></tr>
+      <tr><td>Public HTTPS page can load local helper page</td><td id="c2">not tested</td></tr>
+      <tr><td>Browser shows local-service permission prompt</td><td id="c3">observe manually</td></tr>
+      <tr><td>Local helper calls local API</td><td id="c4">not tested</td></tr>
+      <tr><td>Helper returns result with postMessage</td><td id="c5">not tested</td></tr>
+      <tr><td>Parent verifies helper origin before accepting result</td><td id="c6">enabled</td></tr>
+    </tbody>
+  </table>
+
+  <h2>Iframe</h2>
+  <iframe id="frame" title="companion helper iframe"></iframe>
+
+  <h2>Log</h2>
+  <pre id="log"></pre>
+
+<script>
+const $ = (id) => document.getElementById(id);
+
+function log(message) {
+  const line = `[${new Date().toISOString()}] ${message}`;
+  $('log').textContent += line + '\n';
+  console.log(line);
+}
+
+function mark(id, value) {
+  $(id).textContent = value;
+}
+
+function newToken() {
+  const token = `COMPANION_CANARY_${crypto.randomUUID()}_${Date.now()}`;
+  $('token').value = token;
+  return token;
+}
+
+function buildHelperUrl() {
+  const token = $('token').value || newToken();
+  const url = new URL($('helperUrl').value);
+  url.searchParams.set('token', token);
+  url.searchParams.set('returnOrigin', window.location.origin);
+  url.searchParams.set('parentOrigin', window.location.origin);
+  return url;
+}
+
+function loadFrame() {
+  const url = buildHelperUrl();
+  log(`Loading helper iframe: ${url.toString()}`);
+  mark('c1', 'local companion simulator must already be running');
+  $('frame').src = url.toString();
+}
+
+function openPopup() {
+  const url = buildHelperUrl();
+  log(`Opening helper popup: ${url.toString()}`);
+  const w = window.open(url.toString(), 'companion_helper_popup', 'popup,width=900,height=700');
+  if (!w) log('Popup blocked by browser.');
+}
+
+$('frame').addEventListener('load', () => {
+  log('iframe load event fired');
+  mark('c2', 'iframe load event fired; check simulator log for helper request');
+});
+
+window.addEventListener('message', (event) => {
+  const expected = $('expectedOrigin').value;
+  log(`postMessage from ${event.origin}: ${JSON.stringify(event.data)}`);
+
+  if (event.origin !== expected) {
+    log(`Rejected message because origin did not match expected origin ${expected}`);
+    return;
+  }
+
+  mark('c5', 'postMessage received from expected helper origin');
+  if (event.data && event.data.type === 'companion-trampoline-result') {
+    const okSteps = (event.data.steps || []).filter(s => s.ok).map(s => s.step).join(', ');
+    mark('c4', `helper reported successful API steps: ${okSteps || 'none'}`);
+  }
+});
+
+$('newToken').onclick = () => log(`new token: ${newToken()}`);
+$('loadFrame').onclick = loadFrame;
+$('openPopup').onclick = openPopup;
+$('clear').onclick = () => { $('log').textContent = ''; };
+
+newToken();
+log('Ready. Start companion_simulator.py locally, then load the helper iframe.');
+</script>
+</body>
+</html>
