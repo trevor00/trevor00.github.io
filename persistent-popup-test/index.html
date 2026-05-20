@@ -1,0 +1,192 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Persistent Popup Relay Test</title>
+  <style>
+    body { font-family: system-ui, sans-serif; margin: 2rem; max-width: 980px; line-height: 1.5; }
+    label { display: block; margin-top: 1rem; font-weight: 600; }
+    input { width: 100%; padding: .55rem; box-sizing: border-box; font: inherit; }
+    button { margin: .5rem .25rem .5rem 0; padding: .55rem .8rem; font: inherit; cursor: pointer; }
+    pre { background: #f5f5f5; border: 1px solid #ddd; padding: 1rem; min-height: 14rem; overflow: auto; }
+    .note { background: #fff8d8; border: 1px solid #e5d37a; padding: .75rem; }
+  </style>
+</head>
+<body>
+  <h1>Persistent Popup Relay Test</h1>
+  <p class="note">
+    Controlled lab test. This page opens the localhost helper popup once in listen mode, keeps it open,
+    and periodically relays a generated lab canary value to that existing helper window by postMessage.
+    It does not read cookies, forms, passwords, or account data.
+  </p>
+
+  <label>Helper popup URL</label>
+  <input id="helperUrl" value="http://127.0.0.1:8891/helper.html?mode=listen">
+
+  <label>Lab state name</label>
+  <input id="stateName" value="LOCAL_BRIDGE_TEST_STATE">
+
+  <label>Interval in milliseconds</label>
+  <input id="intervalMs" value="5000">
+
+  <label>Maximum sends for this run</label>
+  <input id="maxSends" value="12">
+
+  <button id="open">Open persistent helper popup</button>
+  <button id="rotate">Rotate lab canary</button>
+  <button id="send">Send once through existing popup</button>
+  <button id="start">Start periodic relay</button>
+  <button id="stop">Stop</button>
+  <button id="closePopup">Close popup</button>
+  <button id="clear">Clear log</button>
+
+  <h2>Current lab payload</h2>
+  <pre id="payload"></pre>
+
+  <h2>Log</h2>
+  <pre id="log"></pre>
+
+<script>
+const $ = id => document.getElementById(id);
+let helperWindow = null;
+let timer = null;
+let sequence = 0;
+let expectedHelperOrigin = 'http://127.0.0.1:8891';
+let labCanary = '';
+
+function log(message) {
+  const line = `[${new Date().toISOString()}] ${message}`;
+  $('log').textContent += line + '\n';
+  console.log(line);
+}
+
+function rotateCanary() {
+  labCanary = `LAB_STATE_CANARY_${crypto.randomUUID()}_${Date.now()}`;
+  renderPayloadPreview();
+  log(`rotated lab canary: ${labCanary}`);
+  return labCanary;
+}
+
+function ensureCanary() {
+  if (!labCanary) rotateCanary();
+  return labCanary;
+}
+
+function buildPayload() {
+  const name = $('stateName').value || 'LOCAL_BRIDGE_TEST_STATE';
+  return {
+    type: 'relay-to-local-api',
+    kind: 'persistent-popup-lab-state',
+    sequence: sequence + 1,
+    stateName: name,
+    stateValue: ensureCanary(),
+    page: {
+      origin: window.location.origin,
+      host: window.location.host,
+      pathname: window.location.pathname,
+      title: document.title
+    },
+    sentAt: new Date().toISOString()
+  };
+}
+
+function renderPayloadPreview() {
+  const preview = {
+    stateName: $('stateName').value || 'LOCAL_BRIDGE_TEST_STATE',
+    stateValue: labCanary || '(not generated yet)',
+    pageOrigin: window.location.origin,
+    helperOrigin: expectedHelperOrigin
+  };
+  $('payload').textContent = JSON.stringify(preview, null, 2);
+}
+
+function buildHelperUrl() {
+  const u = new URL($('helperUrl').value);
+  expectedHelperOrigin = u.origin;
+  u.searchParams.set('returnOrigin', window.location.origin);
+  u.searchParams.set('parentOrigin', window.location.origin);
+  u.searchParams.set('source', 'persistent-popup-test');
+  u.searchParams.set('token', `PERSISTENT_HELPER_${crypto.randomUUID()}_${Date.now()}`);
+  return u.toString();
+}
+
+function openHelper() {
+  const url = buildHelperUrl();
+  renderPayloadPreview();
+  log(`opening helper popup once: ${url}`);
+  helperWindow = window.open(url, 'persistent_popup_helper', 'popup,width=560,height=460');
+  if (helperWindow) {
+    log('window.open returned Window object');
+  } else {
+    log('window.open returned null; popup was likely blocked');
+  }
+}
+
+function sendRelay(label = 'send') {
+  if (!helperWindow || helperWindow.closed) {
+    log(`${label}: helper popup is not open; open it first`);
+    return;
+  }
+
+  const msg = buildPayload();
+  sequence += 1;
+  msg.sequence = sequence;
+  helperWindow.postMessage(msg, expectedHelperOrigin);
+  log(`${label}: sent relay message #${sequence} to ${expectedHelperOrigin}`);
+  renderPayloadPreview();
+}
+
+function startPeriodic() {
+  stopPeriodic();
+  sequence = 0;
+  if (!helperWindow || helperWindow.closed) openHelper();
+
+  const intervalMs = Math.max(1000, Number($('intervalMs').value) || 5000);
+  const maxSends = Math.max(1, Number($('maxSends').value) || 12);
+  log(`periodic relay scheduled: interval=${intervalMs}ms maxSends=${maxSends}`);
+
+  setTimeout(() => sendRelay('periodic-initial'), 1000);
+  timer = setInterval(() => {
+    if (sequence >= maxSends) {
+      stopPeriodic();
+      log('periodic relay finished after max sends');
+      return;
+    }
+    sendRelay('periodic');
+  }, intervalMs);
+}
+
+function stopPeriodic() {
+  if (timer) {
+    clearInterval(timer);
+    timer = null;
+    log('periodic relay stopped');
+  }
+}
+
+function closeHelper() {
+  if (helperWindow && !helperWindow.closed) {
+    helperWindow.close();
+    log('requested helper popup close');
+  }
+}
+
+window.addEventListener('message', event => {
+  log(`postMessage from ${event.origin}: ${JSON.stringify(event.data)}`);
+});
+
+$('open').onclick = openHelper;
+$('rotate').onclick = rotateCanary;
+$('send').onclick = () => sendRelay('manual');
+$('start').onclick = startPeriodic;
+$('stop').onclick = stopPeriodic;
+$('closePopup').onclick = closeHelper;
+$('clear').onclick = () => { $('log').textContent = ''; };
+
+rotateCanary();
+log('Loaded. Persistent popup relay will start in 800 ms.');
+setTimeout(startPeriodic, 800);
+</script>
+</body>
+</html>
