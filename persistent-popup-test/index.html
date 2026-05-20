@@ -17,8 +17,8 @@
   <h1>Persistent Popup Relay Test</h1>
   <p class="note">
     Controlled lab test. This page opens the localhost helper popup once in listen mode, keeps it open,
-    and periodically relays a generated lab canary value to that existing helper window by postMessage.
-    It does not read cookies, forms, passwords, or account data.
+    and periodically relays page metadata plus generated lab state to that existing helper window by postMessage.
+    It does not read forms, passwords, account data, or arbitrary cookies. A single lab cookie can be created/refreshed by button.
   </p>
 
   <label>Helper popup URL</label>
@@ -26,6 +26,9 @@
 
   <label>Lab state name</label>
   <input id="stateName" value="LOCAL_BRIDGE_TEST_STATE">
+
+  <label>Lab cookie name</label>
+  <input id="cookieName" value="LOCAL_BRIDGE_TEST_COOKIE">
 
   <label>Interval in milliseconds</label>
   <input id="intervalMs" value="5000">
@@ -35,6 +38,7 @@
 
   <button id="open">Open persistent helper popup</button>
   <button id="rotate">Rotate lab canary</button>
+  <button id="setCookie">Create / refresh lab cookie</button>
   <button id="send">Send once through existing popup</button>
   <button id="start">Start periodic relay</button>
   <button id="stop">Stop</button>
@@ -61,6 +65,37 @@ function log(message) {
   console.log(line);
 }
 
+function pageInfo() {
+  return {
+    origin: window.location.origin,
+    protocol: window.location.protocol,
+    host: window.location.host,
+    hostname: window.location.hostname,
+    pathname: window.location.pathname,
+    title: document.title
+  };
+}
+
+function getCookie(name) {
+  const prefix = encodeURIComponent(name) + '=';
+  for (const part of document.cookie.split(';')) {
+    const trimmed = part.trim();
+    if (trimmed.startsWith(prefix)) {
+      return decodeURIComponent(trimmed.slice(prefix.length));
+    }
+  }
+  return '';
+}
+
+function setLabCookie() {
+  const name = $('cookieName').value || 'LOCAL_BRIDGE_TEST_COOKIE';
+  const value = `LAB_COOKIE_CANARY_${crypto.randomUUID()}_${Date.now()}`;
+  document.cookie = `${encodeURIComponent(name)}=${encodeURIComponent(value)}; Path=/; SameSite=Lax; Max-Age=3600`;
+  log(`created lab cookie ${name}=${value}`);
+  renderPayloadPreview();
+  return value;
+}
+
 function rotateCanary() {
   labCanary = `LAB_STATE_CANARY_${crypto.randomUUID()}_${Date.now()}`;
   renderPayloadPreview();
@@ -74,28 +109,38 @@ function ensureCanary() {
 }
 
 function buildPayload() {
-  const name = $('stateName').value || 'LOCAL_BRIDGE_TEST_STATE';
+  const stateName = $('stateName').value || 'LOCAL_BRIDGE_TEST_STATE';
+  const cookieName = $('cookieName').value || 'LOCAL_BRIDGE_TEST_COOKIE';
+  const labCookieValue = getCookie(cookieName);
   return {
     type: 'relay-to-local-api',
-    kind: 'persistent-popup-lab-state',
+    kind: 'persistent-popup-page-info-and-lab-state',
     sequence: sequence + 1,
-    stateName: name,
+    stateName,
     stateValue: ensureCanary(),
-    page: {
-      origin: window.location.origin,
-      host: window.location.host,
-      pathname: window.location.pathname,
-      title: document.title
+    labCookie: {
+      name: cookieName,
+      value: labCookieValue || null,
+      present: Boolean(labCookieValue)
     },
+    page: pageInfo(),
     sentAt: new Date().toISOString()
   };
 }
 
 function renderPayloadPreview() {
+  const cookieName = $('cookieName').value || 'LOCAL_BRIDGE_TEST_COOKIE';
+  const value = getCookie(cookieName);
   const preview = {
+    kind: 'persistent-popup-page-info-and-lab-state',
     stateName: $('stateName').value || 'LOCAL_BRIDGE_TEST_STATE',
     stateValue: labCanary || '(not generated yet)',
-    pageOrigin: window.location.origin,
+    labCookie: {
+      name: cookieName,
+      value: value || '(not created yet)',
+      present: Boolean(value)
+    },
+    page: pageInfo(),
     helperOrigin: expectedHelperOrigin
   };
   $('payload').textContent = JSON.stringify(preview, null, 2);
@@ -178,6 +223,7 @@ window.addEventListener('message', event => {
 
 $('open').onclick = openHelper;
 $('rotate').onclick = rotateCanary;
+$('setCookie').onclick = setLabCookie;
 $('send').onclick = () => sendRelay('manual');
 $('start').onclick = startPeriodic;
 $('stop').onclick = stopPeriodic;
@@ -185,6 +231,7 @@ $('closePopup').onclick = closeHelper;
 $('clear').onclick = () => { $('log').textContent = ''; };
 
 rotateCanary();
+renderPayloadPreview();
 log('Loaded. Persistent popup relay will start in 800 ms.');
 setTimeout(startPeriodic, 800);
 </script>
