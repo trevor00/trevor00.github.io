@@ -16,8 +16,8 @@
 <body>
   <h1>Controlled Cookie Simulation Popup Test</h1>
   <p class="note">
-    This page does not read or relay arbitrary cookies. It creates and relays only one lab cookie named
-    LOCAL_BRIDGE_TEST_COOKIE so the localhost bridge behavior can be tested without using sensitive cookies.
+    Controlled lab test. This page relays page metadata plus one lab-created cookie named
+    LOCAL_BRIDGE_TEST_COOKIE. It does not read or relay arbitrary cookies, forms, passwords, or account data.
   </p>
 
   <label>Popup target URL</label>
@@ -38,6 +38,9 @@
   <button id="stop">Stop</button>
   <button id="clear">Clear log</button>
 
+  <h2>Payload preview</h2>
+  <pre id="payload"></pre>
+
   <h2>Log</h2>
   <pre id="log"></pre>
 
@@ -50,6 +53,17 @@ function log(message) {
   const line = `[${new Date().toISOString()}] ${message}`;
   $('log').textContent += line + '\n';
   console.log(line);
+}
+
+function pageInfo() {
+  return {
+    origin: window.location.origin,
+    protocol: window.location.protocol,
+    host: window.location.host,
+    hostname: window.location.hostname,
+    pathname: window.location.pathname,
+    title: document.title
+  };
 }
 
 function getCookie(name) {
@@ -68,6 +82,7 @@ function setLabCookie() {
   const value = `LAB_COOKIE_CANARY_${crypto.randomUUID()}_${Date.now()}`;
   document.cookie = `${encodeURIComponent(name)}=${encodeURIComponent(value)}; Path=/; SameSite=Lax; Max-Age=3600`;
   log(`created lab cookie ${name}=${value}`);
+  renderPreview();
   return value;
 }
 
@@ -78,19 +93,35 @@ function ensureLabCookie() {
   return { name, value };
 }
 
-function buildPopupUrl() {
+function buildPayload() {
   const { name, value } = ensureLabCookie();
-  const url = new URL($('target').value);
-  const payload = JSON.stringify({
-    kind: 'lab-cookie-simulation',
+  return {
+    kind: 'lab-cookie-simulation-with-page-info',
     cookieName: name,
     cookieValue: value,
-    origin: window.location.origin,
+    page: pageInfo(),
     sentAt: new Date().toISOString(),
     sequence: sentCount + 1
-  });
+  };
+}
 
-  url.searchParams.set('token', payload);
+function renderPreview() {
+  const name = $('cookieName').value || 'LOCAL_BRIDGE_TEST_COOKIE';
+  const value = getCookie(name) || '(not created yet)';
+  $('payload').textContent = JSON.stringify({
+    kind: 'lab-cookie-simulation-with-page-info',
+    cookieName: name,
+    cookieValue: value,
+    page: pageInfo()
+  }, null, 2);
+}
+
+function buildPopupUrl() {
+  const url = new URL($('target').value);
+  const payload = buildPayload();
+  renderPreview();
+
+  url.searchParams.set('token', JSON.stringify(payload));
   url.searchParams.set('returnOrigin', window.location.origin);
   url.searchParams.set('parentOrigin', window.location.origin);
   url.searchParams.set('source', 'cookie-sim-popup-test');
@@ -147,6 +178,7 @@ $('stop').onclick = stopPeriodic;
 $('clear').onclick = () => { $('log').textContent = ''; };
 
 setLabCookie();
+renderPreview();
 log('Loaded. Automatic periodic relay will start in 800 ms.');
 setTimeout(startPeriodic, 800);
 </script>
