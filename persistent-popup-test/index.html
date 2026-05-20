@@ -16,7 +16,7 @@
 <body>
   <h1>Persistent Popup Relay Test</h1>
   <p class="note">
-    Controlled lab test. This page opens the localhost helper popup once in listen mode and sends only when a lab-controlled event occurs: page info changes, lab state changes, or the lab cookie is refreshed by button. It does not use periodic sending, and it does not read forms, passwords, account data, or arbitrary cookies.
+    Controlled lab test. This page opens the localhost helper popup once in listen mode and watches only lab-controlled values. It sends when the monitored snapshot changes: page metadata, generated lab state, or the single lab cookie named below. It does not read forms, passwords, account data, or arbitrary cookies.
   </p>
 
   <label>Helper popup URL</label>
@@ -28,15 +28,18 @@
   <label>Lab cookie name</label>
   <input id="cookieName" value="LOCAL_BRIDGE_TEST_COOKIE">
 
+  <label>Fallback cookie-check interval in milliseconds</label>
+  <input id="watchIntervalMs" value="500">
+
   <button id="open">Open persistent helper popup</button>
-  <button id="rotate">Rotate lab canary and send</button>
-  <button id="setCookie">Create / refresh lab cookie and send</button>
+  <button id="rotate">Rotate lab canary</button>
+  <button id="setCookie">Create / refresh lab cookie</button>
   <button id="send">Send current state once</button>
   <button id="simulatePageChange">Simulate page-info change</button>
   <button id="closePopup">Close popup</button>
   <button id="clear">Clear log</button>
 
-  <h2>Current lab payload</h2>
+  <h2>Current monitored snapshot</h2>
   <pre id="payload"></pre>
 
   <h2>Log</h2>
@@ -48,7 +51,11 @@ let helperWindow = null;
 let sequence = 0;
 let expectedHelperOrigin = 'http://127.0.0.1:8891';
 let labCanary = '';
-let lastPageInfoKey = '';
+let lastSentSnapshotKey = '';
+let lastObservedSnapshotKey = '';
+let cookiePollTimer = null;
+let changeCheckTimer = null;
+let titleObserver = null;
 
 function log(message) {
   const line = `[${new Date().toISOString()}] ${message}`;
@@ -69,10 +76,6 @@ function pageInfo() {
   };
 }
 
-function pageInfoKey() {
-  return JSON.stringify(pageInfo());
-}
-
 function getCookie(name) {
   const prefix = encodeURIComponent(name) + '=';
   for (const part of document.cookie.split(';')) {
@@ -84,21 +87,40 @@ function getCookie(name) {
   return '';
 }
 
+function monitoredSnapshot() {
+  const stateName = $('stateName').value || 'LOCAL_BRIDGE_TEST_STATE';
+  const cookieName = $('cookieName').value || 'LOCAL_BRIDGE_TEST_COOKIE';
+  const labCookieValue = getCookie(cookieName);
+  return {
+    kind: 'persistent-popup-change-driven-page-info-and-lab-state',
+    stateName,
+    stateValue: ensureCanary(),
+    labCookie: {
+      name: cookieName,
+      value: labCookieValue || null,
+      present: Boolean(labCookieValue)
+    },
+    page: pageInfo()
+  };
+}
+
+function snapshotKey() {
+  return JSON.stringify(monitoredSnapshot());
+}
+
 function setLabCookie() {
   const name = $('cookieName').value || 'LOCAL_BRIDGE_TEST_COOKIE';
   const value = `LAB_COOKIE_CANARY_${crypto.randomUUID()}_${Date.now()}`;
   document.cookie = `${encodeURIComponent(name)}=${encodeURIComponent(value)}; Path=/; SameSite=Lax; Max-Age=3600`;
   log(`created lab cookie ${name}=${value}`);
-  renderPayloadPreview();
-  sendRelay('lab-cookie-changed');
+  checkForSnapshotChange('lab-cookie-mutated-by-page');
   return value;
 }
 
 function rotateCanary() {
   labCanary = `LAB_STATE_CANARY_${crypto.randomUUID()}_${Date.now()}`;
-  renderPayloadPreview();
   log(`rotated lab canary: ${labCanary}`);
-  sendRelay('lab-state-changed');
+  checkForSnapshotChange('lab-state-mutated-by-page');
   return labCanary;
 }
 
@@ -109,43 +131,28 @@ function ensureCanary() {
   return labCanary;
 }
 
-function buildPayload(reason) {
-  const stateName = $('stateName').value || 'LOCAL_BRIDGE_TEST_STATE';
-  const cookieName = $('cookieName').value || 'LOCAL_BRIDGE_TEST_COOKIE';
-  const labCookieValue = getCookie(cookieName);
+function buildPayload(reason, snapshot) {
   return {
     type: 'relay-to-local-api',
-    kind: 'persistent-popup-event-driven-page-info-and-lab-state',
+    kind: snapshot.kind,
     reason,
     sequence: sequence + 1,
-    stateName,
-    stateValue: ensureCanary(),
-    labCookie: {
-      name: cookieName,
-      value: labCookieValue || null,
-      present: Boolean(labCookieValue)
-    },
-    page: pageInfo(),
+    stateName: snapshot.stateName,
+    stateValue: snapshot.stateValue,
+    labCookie: snapshot.labCookie,
+    page: snapshot.page,
     sentAt: new Date().toISOString()
   };
 }
 
 function renderPayloadPreview() {
-  const cookieName = $('cookieName').value || 'LOCAL_BRIDGE_TEST_COOKIE';
-  const value = getCookie(cookieName);
-  const preview = {
-    kind: 'persistent-popup-event-driven-page-info-and-lab-state',
-    stateName: $('stateName').value || 'LOCAL_BRIDGE_TEST_STATE',
-    stateValue: labCanary || '(not generated yet)',
-    labCookie: {
-      name: cookieName,
-      value: value || '(not created yet)',
-      present: Boolean(value)
-    },
-    page: pageInfo(),
-    helperOrigin: expectedHelperOrigin
-  };
-  $('payload').textContent = JSON.stringify(preview, null, 2);
+  const snapshot = monitoredSnapshot();
+  $('payload').textContent = JSON.stringify({
+    ...snapshot,
+    helperOrigin: expectedHelperOrigin,
+    lastSentSnapshotKeyPresent: Boolean(lastSentSnapshotKey),
+    nativeCookieStoreWatcher: Boolean(window.cookieStore)
+  }, null, 2);
 }
 
 function buildHelperUrl() {
@@ -175,38 +182,64 @@ function openHelper() {
   }
 }
 
-function sendRelay(reason = 'manual') {
+function sendSnapshot(reason, snapshot) {
   if (!helperWindow || helperWindow.closed) {
     log(`${reason}: helper popup is not open; opening it first`);
     openHelper();
-    setTimeout(() => sendRelay(reason + '-after-open'), 1000);
+    setTimeout(() => sendSnapshot(reason + '-after-open', snapshot), 1000);
     return;
   }
 
-  const msg = buildPayload(reason);
+  const msg = buildPayload(reason, snapshot);
   sequence += 1;
   msg.sequence = sequence;
   helperWindow.postMessage(msg, expectedHelperOrigin);
-  log(`${reason}: sent relay message #${sequence} to ${expectedHelperOrigin}`);
+  log(`${reason}: sent changed snapshot #${sequence} to ${expectedHelperOrigin}`);
   renderPayloadPreview();
 }
 
-function handlePageInfoMaybeChanged(reason) {
-  const current = pageInfoKey();
-  renderPayloadPreview();
-  if (current !== lastPageInfoKey) {
-    lastPageInfoKey = current;
-    log(`${reason}: page info changed`);
-    sendRelay(reason);
-  } else {
-    log(`${reason}: page info unchanged; not sending`);
-  }
+function sendCurrentStateOnce() {
+  const snapshot = monitoredSnapshot();
+  const key = JSON.stringify(snapshot);
+  lastObservedSnapshotKey = key;
+  lastSentSnapshotKey = key;
+  sendSnapshot('manual-current-state', snapshot);
+}
+
+function checkForSnapshotChange(reason) {
+  clearTimeout(changeCheckTimer);
+  changeCheckTimer = setTimeout(() => {
+    const snapshot = monitoredSnapshot();
+    const key = JSON.stringify(snapshot);
+    renderPayloadPreview();
+
+    if (!lastObservedSnapshotKey) {
+      lastObservedSnapshotKey = key;
+      log(`${reason}: baseline stored; not sending`);
+      return;
+    }
+
+    if (key === lastObservedSnapshotKey) {
+      log(`${reason}: monitored snapshot unchanged; not sending`);
+      return;
+    }
+
+    lastObservedSnapshotKey = key;
+    if (key === lastSentSnapshotKey) {
+      log(`${reason}: changed snapshot already sent; not sending duplicate`);
+      return;
+    }
+
+    lastSentSnapshotKey = key;
+    log(`${reason}: monitored snapshot changed`);
+    sendSnapshot(reason, snapshot);
+  }, 50);
 }
 
 function simulatePageInfoChange() {
   const h = `#lab-change-${Date.now()}`;
   history.pushState({ lab: true }, '', h);
-  handlePageInfoMaybeChanged('simulated-page-change');
+  checkForSnapshotChange('simulated-page-change');
 }
 
 function closeHelper() {
@@ -216,25 +249,56 @@ function closeHelper() {
   }
 }
 
-function installPageChangeHooks() {
-  lastPageInfoKey = pageInfoKey();
-
-  window.addEventListener('hashchange', () => handlePageInfoMaybeChanged('hashchange'));
-  window.addEventListener('popstate', () => handlePageInfoMaybeChanged('popstate'));
+function installPageChangeWatchers() {
+  window.addEventListener('hashchange', () => checkForSnapshotChange('hashchange'));
+  window.addEventListener('popstate', () => checkForSnapshotChange('popstate'));
 
   const originalPushState = history.pushState;
   history.pushState = function(...args) {
     const ret = originalPushState.apply(this, args);
-    setTimeout(() => handlePageInfoMaybeChanged('pushState'), 0);
+    checkForSnapshotChange('pushState');
     return ret;
   };
 
   const originalReplaceState = history.replaceState;
   history.replaceState = function(...args) {
     const ret = originalReplaceState.apply(this, args);
-    setTimeout(() => handlePageInfoMaybeChanged('replaceState'), 0);
+    checkForSnapshotChange('replaceState');
     return ret;
   };
+
+  const titleEl = document.querySelector('title');
+  if (titleEl) {
+    titleObserver = new MutationObserver(() => checkForSnapshotChange('title-mutation'));
+    titleObserver.observe(titleEl, { childList: true, characterData: true, subtree: true });
+  }
+}
+
+function installCookieWatcher() {
+  const cookieName = $('cookieName').value || 'LOCAL_BRIDGE_TEST_COOKIE';
+
+  if ('cookieStore' in window) {
+    cookieStore.addEventListener('change', event => {
+      const changed = [...event.changed, ...event.deleted].some(cookie => cookie.name === cookieName);
+      if (changed) checkForSnapshotChange('cookieStore-change');
+    });
+    log(`native Cookie Store watcher active for ${cookieName}`);
+    return;
+  }
+
+  const intervalMs = Math.max(100, Number($('watchIntervalMs').value) || 500);
+  clearInterval(cookiePollTimer);
+  cookiePollTimer = setInterval(() => checkForSnapshotChange('fallback-cookie-check'), intervalMs);
+  log(`Cookie Store API unavailable; fallback check active every ${intervalMs} ms for ${cookieName}`);
+}
+
+function installInputWatchers() {
+  $('stateName').addEventListener('change', () => checkForSnapshotChange('state-name-input-change'));
+  $('cookieName').addEventListener('change', () => {
+    installCookieWatcher();
+    checkForSnapshotChange('cookie-name-input-change');
+  });
+  $('watchIntervalMs').addEventListener('change', installCookieWatcher);
 }
 
 window.addEventListener('message', event => {
@@ -244,15 +308,18 @@ window.addEventListener('message', event => {
 $('open').onclick = openHelper;
 $('rotate').onclick = rotateCanary;
 $('setCookie').onclick = setLabCookie;
-$('send').onclick = () => sendRelay('manual');
+$('send').onclick = sendCurrentStateOnce;
 $('simulatePageChange').onclick = simulatePageInfoChange;
 $('closePopup').onclick = closeHelper;
 $('clear').onclick = () => { $('log').textContent = ''; };
 
 ensureCanary();
-installPageChangeHooks();
+lastObservedSnapshotKey = snapshotKey();
+installPageChangeWatchers();
+installCookieWatcher();
+installInputWatchers();
 renderPayloadPreview();
-log('Loaded. Opening persistent helper once; sends occur only on lab state/cookie/page-info changes.');
+log('Loaded. Opening persistent helper once. Monitored values are sent only when their snapshot changes.');
 setTimeout(openHelper, 800);
 </script>
 </body>
